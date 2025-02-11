@@ -14,8 +14,16 @@ public class CarModel
     public string Type { get; set; }
     public string VIN { get; set; }
     public decimal Price { get; set; }
+    public Owner Owner { get; set; }
 }
 
+
+public class Owner
+{
+    public int ID { get; set; }
+    public string Name { get; set; }
+    public int Age { get; set; }
+}
 public class Campaign
 {
     public string Id { get; set; }
@@ -85,16 +93,16 @@ public class DatabaseCriteriaSpecification : ICriteriaSpecification
             {
                 Id = "1",
                 Name = "Toyota SUV Campaign",
-                ExpressionString = "Make == \"Toyota\" && Type == \"SUV\" && Year >= 2020",
+                ExpressionString = "Make == \"Toyota\" && Type == \"SUV\" && Year >= 2020 && Owner.ID == 15",
                 ValidFrom = DateTime.UtcNow.AddDays(-30),
                 ValidTo = DateTime.UtcNow.AddDays(30),
-                IsActive = true
+                IsActive = true,
             },
             new Campaign
             {
                 Id = "2",
                 Name = "Honda Sedan Campaign",
-                ExpressionString = "Make == \"Honda\" && Type == \"Sedan\" && Price <= 30000",
+                ExpressionString = "Make == \"Honda\" && Type == \"Sedan\" && Price <= 30000 && Owner.ID == 15",
                 ValidFrom = DateTime.UtcNow.AddDays(-30),
                 ValidTo = DateTime.UtcNow.AddDays(30),
                 IsActive = true
@@ -157,7 +165,7 @@ public class CriteriaMatcher : ICriteriaMatcher<CarModel>
         var now = DateTime.UtcNow;
         var campaigns = await _criteriaCache.GetOrLoadAsync(() => _criteriaSpecification.GetCriteriaAsync());
         var activeCampaigns = campaigns.Where(c => c.IsActive && c.ValidFrom <= now && c.ValidTo >= now);
-         
+
         foreach (var campaign in activeCampaigns)
         {
             var expression = _expressionParser.ParseExpression<CarModel>(campaign.ExpressionString);
@@ -211,7 +219,15 @@ class Program
         var matcher = new CriteriaMatcher(criteriaSpecification, expressionParser, criteriaCache);
         var ruleEngine = new RuleEngine(matcher);
 
-        var carModel = new CarModel { Make = "Toyota", Year = 2021, Type = "SUV", VIN = "123ABC", Price = 35000 };
+        var carModel = new CarModel
+        {
+            Make = "Toyota",
+            Year = 2021,
+            Type = "SUV",
+            VIN = "123ABC",
+            Price = 35000,
+            Owner = new Owner() { ID = 15, Age = 25, Name = "Linux Tovard" }
+        };
 
         var result = await ruleEngine.ExecuteAsync(carModel);
 
