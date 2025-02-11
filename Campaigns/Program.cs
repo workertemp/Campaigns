@@ -4,7 +4,6 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
 using System.Linq.Dynamic.Core;
-using Campaigns;
 
 #region Model Definitions
 
@@ -37,14 +36,36 @@ public class CriteriaMatchResult
 
 #endregion
 
+#region Expression Parser
+
+public interface IExpressionParser
+{
+    Expression<Func<T, bool>> ParseExpression<T>(string expressionString);
+}
+
 public class ExpressionParsingException : Exception
 {
     public ExpressionParsingException(string message, Exception innerException)
         : base(message, innerException) { }
 }
 
+public class CarExpressionParser : IExpressionParser
+{
+    public Expression<Func<T, bool>> ParseExpression<T>(string expressionString)
+    {
+        if (string.IsNullOrWhiteSpace(expressionString))
+        {
+            throw new ExpressionParsingException("Expression string cannot be empty", null);
+        }
 
+        return DynamicExpressionParser.ParseLambda<T, bool>(
+            new ParsingConfig { ResolveTypesBySimpleName = true },
+            false,
+            expressionString);
+    }
+}
 
+#endregion
 
 #region Criteria Specification
 
@@ -107,6 +128,52 @@ public class InMemoryCriteriaCache : ICriteriaCache
 
 #endregion
 
+#region Criteria Matcher
+
+public interface ICriteriaMatcher<T>
+{
+    Task<CriteriaMatchResult> MatchAsync(T model);
+}
+
+public class CriteriaMatcher : ICriteriaMatcher<CarModel>
+{
+    private readonly ICriteriaSpecification _criteriaSpecification;
+    private readonly IExpressionParser _expressionParser;
+    private readonly ICriteriaCache _criteriaCache;
+
+    public CriteriaMatcher(
+        ICriteriaSpecification criteriaSpecification,
+        IExpressionParser expressionParser,
+        ICriteriaCache criteriaCache)
+    {
+        _criteriaSpecification = criteriaSpecification;
+        _expressionParser = expressionParser;
+        _criteriaCache = criteriaCache;
+    }
+
+    public async Task<CriteriaMatchResult> MatchAsync(CarModel model)
+    {
+        var result = new CriteriaMatchResult { Model = model };
+        var now = DateTime.UtcNow;
+        var campaigns = await _criteriaCache.GetOrLoadAsync(() => _criteriaSpecification.GetCriteriaAsync());
+        var activeCampaigns = campaigns.Where(c => c.IsActive && c.ValidFrom <= now && c.ValidTo >= now);
+         
+        foreach (var campaign in activeCampaigns)
+        {
+            var expression = _expressionParser.ParseExpression<CarModel>(campaign.ExpressionString);
+            var isMatch = expression.Compile()(model);
+            if (isMatch)
+            {
+                result.MatchedCampaigns.Add(campaign);
+            }
+        }
+
+        result.IsMatch = result.MatchedCampaigns.Any();
+        return result;
+    }
+}
+
+#endregion
 
 #region Rule Engine
 
@@ -139,12 +206,9 @@ class Program
     static async Task Main(string[] args)
     {
         var criteriaSpecification = new DatabaseCriteriaSpecification();
-
         var expressionParser = new CarExpressionParser();
-
         var criteriaCache = new InMemoryCriteriaCache();
         var matcher = new CriteriaMatcher(criteriaSpecification, expressionParser, criteriaCache);
-
         var ruleEngine = new RuleEngine(matcher);
 
         var carModel = new CarModel { Make = "Toyota", Year = 2021, Type = "SUV", VIN = "123ABC", Price = 35000 };
